@@ -1,0 +1,52 @@
+stages:
+  - build
+  - staging
+  - deploy
+
+
+before_script:
+  - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
+
+
+variables:
+  INSTANCE_NAME: $CI_PROJECT_NAME-$CI_COMMIT_REF_SLUG
+  IMAGE_BASE_PATH: $CI_REGISTRY/$CI_PROJECT_PATH/$CI_COMMIT_REF_SLUG
+
+
+build:
+  stage: build
+  tags:
+    - dind_aibackup
+  script:
+    - docker-compose -f docker-compose-ci.yml build
+    - docker-compose -f docker-compose-ci.yml push
+
+
+start:
+  stage: staging
+  tags:
+    - dind_aibackup
+  environment:
+    name: staging/$CI_COMMIT_REF_SLUG
+    url: https://$CI_PROJECT_NAME-$CI_COMMIT_REF_SLUG.aitarget.com
+    on_stop: stop
+  script:
+    - docker stack deploy --with-registry-auth  --compose-file=docker-compose-ci.yml ${INSTANCE_NAME}
+
+
+stop:
+  stage: staging
+  tags:
+  - dind_aibackup
+  variables:
+    GIT_STRATEGY: none
+  script:
+  - docker stack rm ${INSTANCE_NAME}
+  - CONTAINERS=$(docker ps -aqf name=${INSTANCE_NAME})
+  - if [[ $(echo ${CONTAINERS} | wc -c) -ne 1 ]]; then docker rm -f ${CONTAINERS}; else echo "Containers not found."; fi
+  - VOLUMES=$(docker volume ls -qf name=${INSTANCE_NAME})
+  - if [[ $(echo ${VOLUMES} | wc -c) -ne 1 ]]; then docker volume rm -f ${VOLUMES}; else echo "Volumes not found."; fi
+  when: manual
+  environment:
+    name: staging/$CI_COMMIT_REF_SLUG
+    action: stop
